@@ -33,12 +33,173 @@ logcmd(){
 source /etc/os-release
 RELEASE=$ID
 VERSION=$VERSION_ID
-loggreen "== Script: atrandys/v2ray-ws-tls/vless_tcp_xtls.sh"
+loggreen "== Script: atrandys/v2ray-ws-tls/vless_tcp_xtls_wp.sh"
 loggreen "== Time  : $(date +"%Y-%m-%d %H:%M:%S")"
 loggreen "== OS    : $RELEASE $VERSION"
 loggreen "== Kernel: $(uname -r)"
 loggreen "== User  : $(whoami)"
 sleep 2s
+
+install_wordpress(){
+    loggreen "$(date +"%Y-%m-%d %H:%M:%S") ==== 安装wordpress"
+    logcmd "yum install -y iptables-services"
+    systemctl start iptables
+    systemctl enable iptables
+    iptables -F
+    SSH_PORT=$(awk '$1=="Port" {print $2}' /etc/ssh/sshd_config)
+    if [ ! -n "$SSH_PORT" ]; then
+        iptables -A INPUT -p tcp -m tcp --dport 22 -j ACCEPT
+    else
+        iptables -A INPUT -p tcp -m tcp --dport ${SSH_PORT} -j ACCEPT
+    fi
+    iptables -A INPUT -p tcp -m tcp --dport 80 -j ACCEPT
+    iptables -A INPUT -p tcp -m tcp --dport 443 -j ACCEPT
+    iptables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
+    iptables -A INPUT -i lo -j ACCEPT
+    iptables -P INPUT DROP
+    iptables -P FORWARD DROP
+    iptables -P OUTPUT ACCEPT
+    service iptables save
+    loggreen "====================================================================="
+    loggreen "安全起见，iptables仅开启ssh,http,https端口，如需开放其他端口请自行放行"
+    loggreen "====================================================================="
+    echo
+    echo
+    sleep 1
+    yum -y install  wget
+    mkdir /usr/share/wordpresstemp
+    cd /usr/share/wordpresstemp/
+    wget https://cn.wordpress.org/latest-zh_CN.zip
+    if [ ! -f "/usr/share/wordpresstemp/latest-zh_CN.zip" ]; then
+        logred "从cn官网下载wordpress失败，尝试从github下载……"
+        logcmd "wget https://github.com/atrandys/wordpress/raw/master/latest-zh_CN.zip"
+    fi
+    if [ ! -f "/usr/share/wordpresstemp/latest-zh_CN.zip" ]; then
+        logred "从github下载wordpress也失败了，请尝试手动安装……"
+        loggreen "从wordpress官网下载包然后命名为latest-zh_CN.zip，新建目录/usr/share/wordpresstemp/，上传到此目录下即可"
+        exit 1
+    fi
+    loggreen "==============="
+    loggreen " 1.安装必要软件"
+    loggreen "==============="
+    sleep 1s
+    echo
+    wget https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+    wget https://rpms.remirepo.net/enterprise/remi-release-7.rpm
+    if [ -f "epel-release-latest-7.noarch.rpm" -a -f "remi-release-7.rpm" ]; then
+        loggreen "下载软件源成功"
+    else
+        logred "下载软件源失败，退出安装"
+        exit 1
+    fi
+    logcmd "rpm -ivh remi-release-7.rpm epel-release-latest-7.noarch.rpm --force --nodeps"
+    #sed -i "0,/enabled=0/s//enabled=1/" /etc/yum.repos.d/epel.repo
+    yum -y install unzip vim tcl expect curl socat
+    echo
+    echo
+    loggreen "============"
+    loggreen "2.安装PHP7.4"
+    loggreen "============"
+    sleep 1
+    logcmd "yum -y install php74 php74-php-gd php74-php-opcache php74-php-pdo php74-php-mbstring php74-php-cli php74-php-fpm php74-php-mysqlnd php74-php-xml"
+    service php74-php-fpm start
+    chkconfig php74-php-fpm on
+    if [ `yum list installed | grep php74 | wc -l` -ne 0 ]; then
+        echo
+        loggreen "【checked】 PHP7安装成功"
+        echo
+        echo
+        sleep 2s
+        php_status=1
+    fi
+    loggreen "==============="
+    loggreen "  3.安装MySQL"
+    loggreen "==============="
+    sleep 1s
+    #wget http://repo.mysql.com/mysql-community-release-el7-5.noarch.rpm
+    wget https://repo.mysql.com/mysql80-community-release-el7-3.noarch.rpm
+    logcmd "rpm -ivh mysql80-community-release-el7-3.noarch.rpm --force --nodeps"
+    yum -y install mysql-server
+    systemctl enable mysqld.service
+    systemctl start  mysqld.service
+    if [ `yum list installed | grep mysql-community | wc -l` -ne 0 ]; then
+        loggreen "【checked】 MySQL安装成功"
+        echo
+        echo
+        sleep 2
+        mysql_status=1
+    fi
+    echo
+    echo
+    loggreen "==============="
+    loggreen "  4.配置MySQL"
+    loggreen "==============="
+    sleep 2
+    originpasswd=`cat /var/log/mysqld.log | grep password | head -1 | rev  | cut -d ' ' -f 1 | rev`
+    mysqlpasswd=`mkpasswd -l 18 -d 2 -c 3 -C 4 -s 5 | sed $'s/[\'\/\;\"\:\.\?\&]//g'`
+cat > ~/.my.cnf <<EOT
+[mysql]
+user=root
+password="$originpasswd"
+EOT
+    mysql  --connect-expired-password  -e "alter user 'root'@'localhost' identified by '$mysqlpasswd';"
+    systemctl restart mysqld
+    sleep 5s
+cat > ~/.my.cnf <<EOT
+[mysql]
+user=root
+password="$mysqlpasswd"
+EOT
+    mysql  --connect-expired-password  -e "create database wordpress_db;"
+    echo
+    loggreen "===================="
+    loggreen " 5.配置php和php-fpm"
+    loggreen "===================="
+    echo
+    echo
+    sleep 1s
+    sed -i "s/upload_max_filesize = 2M/upload_max_filesize = 20M/;" /etc/opt/remi/php74/php.ini
+    sed -i "s/pm.start_servers = 5/pm.start_servers = 3/;s/pm.min_spare_servers = 5/pm.min_spare_servers = 3/;s/pm.max_spare_servers = 35/pm.max_spare_servers = 8/;" /etc/opt/remi/php74/php-fpm.d/www.conf
+    systemctl restart php74-php-fpm.service
+    systemctl restart nginx.service
+    loggreen "===================="
+    loggreen "  6.安装wordpress"
+    loggreen "===================="
+    echo
+    echo
+    sleep 1s
+    cd /usr/share/nginx/html
+    mv /usr/share/wordpresstemp/latest-zh_CN.zip ./
+    unzip latest-zh_CN.zip
+    mv wordpress/* ./
+    #cp wp-config-sample.php wp-config.php
+    logcmd "wget https://raw.githubusercontent.com/atrandys/trojan/master/wp-config.php"
+    loggreen "===================="
+    loggreen "  7.配置wordpress"
+    loggreen "===================="
+    echo
+    echo
+    sleep 1
+    sed -i "s/database_name_here/wordpress_db/;s/username_here/root/;s?password_here?$mysqlpasswd?;" /usr/share/nginx/html/wp-config.php
+    #echo "define('FS_METHOD', "direct");" >> /usr/share/nginx/html/wp-config.php
+    chown -R apache:apache /usr/share/nginx/html/
+    #chmod 775 apache:apache /usr/share/nginx/html/ -Rf
+    chmod -R 775 /usr/share/nginx/html/wp-content
+    loggreen "=========================================================================="
+    loggreen " WordPress服务端配置已完成，请打开浏览器访问您的域名进行前台配置"
+    loggreen " 数据库密码等信息参考文件：/usr/share/nginx/html/wp-config.php"
+    loggreen "=========================================================================="
+    echo
+    if [ "$cert_failed" == "1" ]; then
+        loggreen "======nginx信息======"
+        logred "申请证书失败，请尝试手动申请证书."
+    fi    
+    loggreen "=================v2ray配置文件=================="
+    cat /usr/local/etc/v2ray/myconfig.json
+    loggreen "本次安装检测信息如下："
+    logcmd "ps -aux | grep -e nginx -e v2ray -e mysql -e php"
+}
+
 check_release(){
     loggreen "$(date +"%Y-%m-%d %H:%M:%S") ==== 检查系统版本"
     logcmd "yum install -y wget"
@@ -57,7 +218,7 @@ check_release(){
             if [ "$CHECK" == "SELINUX=enforcing" ]; then
                 loggreen "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
                 setenforce 0
-                sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+                sed -i 's/SELINUX=enforcing/SELINUX=disabled/g'/etc/sysconfig/selinux
                 #loggreen "SELinux is not disabled, add port 80/443 to SELinux rules."
                 #loggreen "==== Install semanage"
                 #logcmd "yum install -y policycoreutils-python"
@@ -68,16 +229,19 @@ check_release(){
             elif [ "$CHECK" == "SELINUX=permissive" ]; then
                 loggreen "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
                 setenforce 0
-                sed -i 's/SELINUX=permissive/SELINUX=disabled/g' /etc/sysconfig/selinux
+                sed -i 's/SELINUX=permissive/SELINUX=disabled/g'/etc/sysconfig/selinux
             fi
         fi
         firewall_status=`firewall-cmd --state`
         if [ "$firewall_status" == "running" ]; then
-            loggreen "$(date +"%Y-%m-%d %H:%M:%S") - FireWalld状态非disabled,添加80/443到FireWalld rules."
-            firewall-cmd --zone=public --add-port=80/tcp --permanent
-            firewall-cmd --zone=public --add-port=443/tcp --permanent
-            firewall-cmd --reload
+            loggreen "$(date +"%Y-%m-%d %H:%M:%S") - FireWalld状态为running,关闭FireWalld."
+            #firewall-cmd --zone=public --add-port=80/tcp --permanent
+            #firewall-cmd --zone=public --add-port=443/tcp --permanent
+            #firewall-cmd --reload
+            logcmd "systemctl disable firewalld"
+            logcmd "systemctl stop firewalld"
         fi
+        #rm -f /var/lib/rpm/.rpm.lock
         while [ ! -f "nginx-release-centos-7-0.el7.ngx.noarch.rpm" ]
         do
             logcmd "wget http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm"
@@ -86,36 +250,9 @@ check_release(){
             fi
         done
         logcmd "rpm -ivh nginx-release-centos-7-0.el7.ngx.noarch.rpm --force --nodeps"
-        #logcmd "rpm -Uvh http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm --force --nodeps"
         #loggreen "Prepare to install nginx."
         #yum install -y libtool perl-core zlib-devel gcc pcre* >/dev/null 2>&1
         logcmd "yum install -y epel-release"
-    elif [ "$RELEASE" == "ubuntu" ]; then
-        systemPackage="apt-get"
-        if  [ "$VERSION" == "14" ] ;then
-            logred "$(date +"%Y-%m-%d %H:%M:%S") - 暂不支持Ubuntu 14.\n== Install failed."
-            exit
-        fi
-        if  [ "$VERSION" == "12" ] ;then
-            logred "$(date +"%Y-%m-%d %H:%M:%S") - 暂不支持Ubuntu 12.\n== Install failed."
-            exit
-        fi
-        ufw_status=`systemctl status ufw | grep "Active: active"`
-        if [ -n "$ufw_status" ]; then
-            ufw allow 80/tcp
-            ufw allow 443/tcp
-            ufw reload
-        fi
-        apt-get update >/dev/null 2>&1
-    elif [ "$RELEASE" == "debian" ]; then
-        systemPackage="apt-get"
-        ufw_status=`systemctl status ufw | grep "Active: active"`
-        if [ -n "$ufw_status" ]; then
-            ufw allow 80/tcp
-            ufw allow 443/tcp
-            ufw reload
-        fi
-        apt-get update >/dev/null 2>&1
     else
         logred "$(date +"%Y-%m-%d %H:%M:%S") - 当前系统不被支持. \n== Install failed."
         exit
@@ -124,6 +261,8 @@ check_release(){
 
 check_port(){
     loggreen "$(date +"%Y-%m-%d %H:%M:%S") ==== 检查端口"
+    echo
+    echo
     logcmd "$systemPackage -y install net-tools"
     Port80=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80`
     Port443=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 443`
@@ -140,6 +279,8 @@ check_port(){
 }
 install_nginx(){
     loggreen "$(date +"%Y-%m-%d %H:%M:%S") ==== 安装nginx"
+    echo
+    echo
     logcmd "$systemPackage install -y nginx"
     if [ -f "/etc/nginx" ]; then
         logred "$(date +"%Y-%m-%d %H:%M:%S") - 看起来nginx没有安装成功，请先使用脚本中的删除v2ray功能，然后再重新安装.\n== Install failed."
@@ -170,20 +311,7 @@ http {
 }
 EOF
 
-cat > /etc/nginx/conf.d/default.conf<<-EOF
- server {
-    listen       127.0.0.1:37212;
-    server_name  $your_domain;
-    root /usr/share/nginx/html;
-    index index.php index.html index.htm;
-}
- server {
-    listen       127.0.0.1:37213 http2;
-    server_name  $your_domain;
-    root /usr/share/nginx/html;
-    index index.php index.html index.htm;
-}
-    
+cat > /etc/nginx/conf.d/default.conf<<-EOF    
 server { 
     listen       0.0.0.0:80;
     server_name  $your_domain;
@@ -194,12 +322,6 @@ server {
 EOF
     loggreen "$(date +"%Y-%m-%d %H:%M:%S") ==== 检测nginx配置文件"
     logcmd "nginx -t"
-    #CHECK=$(grep SELINUX= /etc/selinux/config | grep -v "#")
-    #if [ "$CHECK" != "SELINUX=disabled" ]; then
-    #    loggreen "设置Selinux允许nginx"
-    #    cat /var/log/audit/audit.log | grep nginx | grep denied | audit2allow -M mynginx  
-    #    semodule -i mynginx.pp 
-    #fi
     systemctl enable nginx.service
     systemctl restart nginx.service
     loggreen "$(date +"%Y-%m-%d %H:%M:%S") - 使用acme.sh申请https证书."
@@ -211,11 +333,36 @@ EOF
         cert_failed="1"
         logred "$(date +"%Y-%m-%d %H:%M:%S") - 申请证书失败，请尝试手动申请证书."
     fi
+cat > /etc/nginx/conf.d/default.conf<<-EOF
+server {
+    listen       127.0.0.1:37212 http2;
+    server_name  $your_domain;
+    root /usr/share/nginx/html;
+    index index.php index.html index.htm;
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }
+    location / {
+        try_files \$uri \$uri/ /index.php?\$args;
+    }
+    
+}
+server {
+    listen       0.0.0.0:80;
+    server_name  $your_domain;
+    return 301 https://$your_domain\$request_uri;
+}
+EOF
     install_v2ray
+    install_wordpress
 }
 
 install_v2ray(){ 
     loggreen "$(date +"%Y-%m-%d %H:%M:%S") ==== 安装v2ray"
+    echo
+    echo
     mkdir /usr/local/etc/v2ray/
     mkdir /usr/local/etc/v2ray/cert
     logcmd "bash <(curl -L -s https://raw.githubusercontent.com/v2fly/fhs-install-v2ray/master/install-release.sh)"
@@ -244,11 +391,8 @@ cat > /usr/local/etc/v2ray/config.json<<-EOF
                 "decryption": "none", 
                 "fallbacks": [
                     {
-                        "dest": 37212
-                    }, 
-                    {
                         "alpn": "h2", 
-                        "dest": 37213
+                        "dest": 37212
                     }
                 ]
             }, 
@@ -327,8 +471,8 @@ EOF
     if [ -d "/usr/share/nginx/html/" ]; then
         cd /usr/share/nginx/html/ && rm -f ./*
         #wget https://github.com/atrandys/v2ray-ws-tls/raw/master/web.zip >/dev/null 2>&1
-        logcmd "wget https://github.com/atrandys/trojan/raw/master/fakesite.zip"
-        logcmd "unzip -o fakesite.zip"
+        #logcmd "wget https://github.com/atrandys/trojan/raw/master/fakesite.zip"
+        #logcmd "unzip -o fakesite.zip"
         #unzip web.zip >/dev/null 2>&1
     fi
     #systemctl stop v2ray
@@ -359,16 +503,7 @@ id：${v2uuid}
 }
 EOF
 
-    loggreen "== 安装完成."
-    if [ "$cert_failed" == "1" ]; then
-        loggreen "======nginx信息======"
-        logred "申请证书失败，请尝试手动申请证书."
-    fi    
-    loggreen "=================v2ray配置文件=================="
-    cat /usr/local/etc/v2ray/myconfig.json
-    loggreen "本次安装检测信息如下："
-    logcmd "ps -aux | grep -e nginx -e v2ray"
-    
+    loggreen "== v2ray安装完成."
 }
 
 check_domain(){
@@ -413,21 +548,25 @@ remove_v2ray(){
     rm -rf /etc/nginx
     rm -rf /usr/share/nginx/html/*
     rm -rf /root/.acme.sh/
+    yum remove -y php74 php74-php-gd  php74-php-pdo php74-php-opcache php74-php-mbstring php74-php-cli php74-php-fpm php74-php-mysqlnd mysql
+    rm -rf /var/lib/mysql	
+    rm -rf /usr/lib64/mysql
+    rm -rf /usr/share/mysql
     loggreen "nginx & v2ray has been deleted."
     
 }
 
 function start_menu(){
     clear
-    loggreen " ====================================================="
-    loggreen " 描述：v2ray(vless) + tcp + xtls一键安装脚本"
-    loggreen " 系统：支持centos7/debian9+/ubuntu16.04+     "
+    loggreen " ======================================================"
+    loggreen " 描述：v2ray(vless) + tcp + xtls + wordpress一键安装脚本"
+    loggreen " 系统：支持centos7"
     loggreen " 作者：atrandys  www.atrandys.com"
-    loggreen " ====================================================="
+    loggreen " ======================================================"
     echo
-    loggreen " 1. 安装 vless + tcp + xtls"
+    loggreen " 1. 安装 vless + tcp + xtls + wordpress"
     loggreen " 2. 更新 v2ray"
-    logred " 3. 删除 v2ray"
+    logred " 3. 删除 v2ray + wordpress"
     logyellow " 0. Exit"
     echo
     read -p "输入数字:" num
