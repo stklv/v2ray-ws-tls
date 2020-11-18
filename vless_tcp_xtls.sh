@@ -41,9 +41,9 @@ loggreen "== User  : $(whoami)"
 sleep 2s
 check_release(){
     loggreen "$(date +"%Y-%m-%d %H:%M:%S") ==== 检查系统版本"
-    logcmd "yum install -y wget"
     if [ "$RELEASE" == "centos" ]; then
         systemPackage="yum"
+        logcmd "yum install -y wget"
         if  [ "$VERSION" == "6" ] ;then
             logred "$(date +"%Y-%m-%d %H:%M:%S") - 暂不支持CentOS 6.\n== Install failed."
             exit
@@ -57,7 +57,7 @@ check_release(){
             if [ "$CHECK" == "SELINUX=enforcing" ]; then
                 loggreen "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
                 setenforce 0
-                sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/sysconfig/selinux
+                sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
                 #loggreen "SELinux is not disabled, add port 80/443 to SELinux rules."
                 #loggreen "==== Install semanage"
                 #logcmd "yum install -y policycoreutils-python"
@@ -68,7 +68,7 @@ check_release(){
             elif [ "$CHECK" == "SELINUX=permissive" ]; then
                 loggreen "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
                 setenforce 0
-                sed -i 's/SELINUX=permissive/SELINUX=disabled/g' /etc/sysconfig/selinux
+                sed -i 's/SELINUX=permissive/SELINUX=disabled/g' /etc/selinux/config
             fi
         fi
         firewall_status=`firewall-cmd --state`
@@ -238,7 +238,7 @@ cat > /usr/local/etc/v2ray/config.json<<-EOF
                         "id": "$v2uuid", 
                         "level": 0, 
                         "email": "a@b.com",
-                        "flow":"xtls-rprx-origin"
+                        "flow":"xtls-rprx-direct"
                     }
                 ], 
                 "decryption": "none", 
@@ -305,7 +305,7 @@ cat > /usr/local/etc/v2ray/client.json<<-EOF
                         "users": [
                             {
                                 "id": "$v2uuid",
-                                "flow": "xtls-rprx-origin",
+                                "flow": "xtls-rprx-direct",
                                 "encryption": "none",
                                 "level": 0
                             }
@@ -350,7 +350,7 @@ cat > /usr/local/etc/v2ray/myconfig.json<<-EOF
 端口：443
 id：${v2uuid}
 加密：none
-流控：xtls-rprx-origin
+流控：xtls-rprx-direct
 别名：自定义
 传输协议：tcp
 伪装类型：none

@@ -19,6 +19,7 @@ VERSION=$VERSION_ID
 
 check_release(){
     if [ "$RELEASE" == "centos" ]; then
+        yum install -y wget
         systemPackage="yum"
         if  [ -n "$(grep ' 6\.' /etc/redhat-release)" ] ;then
             red "CentOS 6 is not supported."
@@ -31,9 +32,9 @@ check_release(){
         if [ -f "/etc/selinux/config" ]; then
             CHECK=$(grep SELINUX= /etc/selinux/config | grep -v "#")
             if [ "$CHECK" == "SELINUX=enforcing" ]; then
-                loggreen "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
+                green "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
                 setenforce 0
-                sed -i 's/SELINUX=enforcing/SELINUX=disabled/g'/etc/sysconfig/selinux
+                sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
                 #loggreen "SELinux is not disabled, add port 80/443 to SELinux rules."
                 #loggreen "==== Install semanage"
                 #logcmd "yum install -y policycoreutils-python"
@@ -42,9 +43,9 @@ check_release(){
                 #semanage port -a -t http_port_t -p tcp 37212
                 #semanage port -a -t http_port_t -p tcp 37213
             elif [ "$CHECK" == "SELINUX=permissive" ]; then
-                loggreen "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
+                green "$(date +"%Y-%m-%d %H:%M:%S") - SELinux状态非disabled,关闭SELinux."
                 setenforce 0
-                sed -i 's/SELINUX=permissive/SELINUX=disabled/g'/etc/sysconfig/selinux
+                sed -i 's/SELINUX=permissive/SELINUX=disabled/g' /etc/selinux/config
             fi
         fi
         firewall_status=`firewall-cmd --state`
@@ -56,12 +57,12 @@ check_release(){
         fi
         while [ ! -f "nginx-release-centos-7-0.el7.ngx.noarch.rpm" ]
         do
-            logcmd "wget http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm"
+            wget http://nginx.org/packages/centos/7/noarch/RPMS/nginx-release-centos-7-0.el7.ngx.noarch.rpm
             if [ ! -f "nginx-release-centos-7-0.el7.ngx.noarch.rpm" ]; then
-                logred "$(date +"%Y-%m-%d %H:%M:%S") - 下载nginx rpm包失败，继续重试..."
+                red "$(date +"%Y-%m-%d %H:%M:%S") - 下载nginx rpm包失败，继续重试..."
             fi
         done
-        logcmd "rpm -ivh nginx-release-centos-7-0.el7.ngx.noarch.rpm --force --nodeps"
+        rpm -ivh nginx-release-centos-7-0.el7.ngx.noarch.rpm --force --nodeps
         #green "Prepare to install nginx."
         #yum install -y libtool perl-core zlib-devel gcc pcre* >/dev/null 2>&1
         yum install -y epel-release
@@ -95,6 +96,7 @@ check_release(){
 }
 
 check_port(){
+    $systemPackage install -y unzip >/dev/null 2>&1
     green "Check ports..."
     sleep 1s
     $systemPackage -y install net-tools >/dev/null 2>&1
@@ -280,7 +282,6 @@ EOF
 }
 
 check_domain(){
-    $systemPackage install -y wget curl unzip >/dev/null 2>&1
     blue "Eenter your domain:"
     read your_domain
     real_addr=`ping ${your_domain} -c 1 | sed '1{s/[^(]*(//;s/).*//;q}'`
